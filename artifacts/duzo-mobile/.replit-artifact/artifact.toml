@@ -1,0 +1,24 @@
+kind = "mobile"
+previewPath = "/duzo-mobile/"
+title = "DuZo Marketplace"
+description = "A React Native mobile marketplace connecting Nigerian businesses with verified suppliers, product listings, quote requests, and seller tools."
+version = "1.0.0"
+id = "artifacts/duzo-mobile"
+router = "expo-domain"
+
+[[services]]
+name = "expo"
+ensurePreviewReachable = "/status"
+paths = [ "/duzo-mobile/" ]
+localPort = 21537
+
+[services.development]
+run = "pnpm --filter @workspace/duzo-mobile run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/duzo-mobile", "run", "build" ]
+run = [ "pnpm", "--filter", "@workspace/duzo-mobile", "run", "serve" ]
+
+[services.env]
+PORT = "21537"
+BASE_PATH = "/duzo-mobile/"
