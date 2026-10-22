@@ -8,6 +8,8 @@
     "scheme": "duzo",
     "userInterfaceStyle": "light",
     "splash": {
+      "image": "./assets/images/icon.png",
+      "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
     "ios": {

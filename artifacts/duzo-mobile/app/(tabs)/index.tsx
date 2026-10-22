@@ -1,5 +1,6 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
+  Alert,
   Image,
   ImageBackground,
   Platform,
@@ -12,8 +13,18 @@ import {
   View,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import colors from '@/constants/colors';
+import {
+  ACCOUNT_PROFILE_STORAGE_KEY,
+  DEFAULT_BUSINESS_PROFILE,
+  SUPPLIER_PROFILES,
+  type AccountProfile,
+  type BusinessProfileData,
+  type SupplierId,
+  type SupplierProfile,
+} from '@/constants/account';
 
 const C = colors.light;
 const logo = require('@/assets/images/duzo-logo.png');
@@ -21,7 +32,7 @@ const farmer = require('@/assets/images/farmer-hero.png');
 const maize = require('@/assets/images/yellow-maize.png');
 
 type Role = 'buyer' | 'seller';
-type Page = 'tab' | 'product' | 'business' | 'chat' | 'listing';
+type Page = 'tab' | 'product' | 'business' | 'chat' | 'listing' | 'edit-profile';
 type BuyerTab =
   | 'Home'
   | 'Explore'
@@ -107,8 +118,16 @@ function SearchBar({
   );
 }
 
-function SupplierMark({ small = false }: { small?: boolean }) {
-  return (
+function SupplierMark({
+  small = false,
+  onPress,
+  accessibilityLabel = 'Open business profile',
+}: {
+  small?: boolean;
+  onPress?: () => void;
+  accessibilityLabel?: string;
+}) {
+  const mark = (
     <View style={[styles.supplierMark, small && styles.supplierMarkSmall]}>
       <Feather name="hexagon" size={small ? 19 : 24} color="#fff" />
       <Feather
@@ -118,6 +137,18 @@ function SupplierMark({ small = false }: { small?: boolean }) {
         style={styles.markLeaf}
       />
     </View>
+  );
+  return onPress ? (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
+      hitSlop={6}
+    >
+      {mark}
+    </Pressable>
+  ) : (
+    mark
   );
 }
 
@@ -130,18 +161,22 @@ function PrimaryButton({
   icon,
   onPress,
   compact = false,
+  disabled = false,
 }: {
   label: string;
   icon?: keyof typeof Feather.glyphMap;
   onPress: () => void;
   compact?: boolean;
+  disabled?: boolean;
 }) {
   return (
     <Pressable
       onPress={onPress}
+      disabled={disabled}
       style={({ pressed }) => [
         styles.primaryButton,
         compact && styles.primaryButtonCompact,
+        disabled && styles.buttonDisabled,
         pressed && styles.pressed,
       ]}
     >
@@ -183,6 +218,9 @@ export default function MarketplaceScreen() {
   const [buyerTab, setBuyerTab] = useState<BuyerTab>('Home');
   const [sellerTab, setSellerTab] = useState<SellerTab>('Overview');
   const [page, setPage] = useState<Page>('tab');
+  const [accountProfile, setAccountProfile] = useState<AccountProfile | null>(null);
+  const [businessProfile, setBusinessProfile] = useState<BusinessProfileData>(DEFAULT_BUSINESS_PROFILE);
+  const [selectedSupplier, setSelectedSupplier] = useState<SupplierId | 'own'>('greenfield');
   const [query, setQuery] = useState('');
   const [profileSection, setProfileSection] = useState('Overview');
   const [favorite, setFavorite] = useState(false);
@@ -196,6 +234,22 @@ export default function MarketplaceScreen() {
   const [listingPrice, setListingPrice] = useState('');
   const [listingSaved, setListingSaved] = useState(false);
 
+  useEffect(() => {
+    AsyncStorage.getItem(ACCOUNT_PROFILE_STORAGE_KEY)
+      .then((saved) => {
+        if (!saved) return;
+        const parsed = JSON.parse(saved) as AccountProfile;
+        setAccountProfile(parsed);
+        if (parsed.accountType === 'business' && parsed.business) {
+          setBusinessProfile(parsed.business);
+          setRole('seller');
+        }
+      })
+      .catch(() => {
+        Alert.alert('Profile could not be loaded', 'Your saved setup could not be read from this device.');
+      });
+  }, []);
+
   const webTopInset = Platform.OS === 'web' ? 67 : 0;
   const webBottomInset = Platform.OS === 'web' ? 34 : 0;
   const topPad = Math.max(insets.top, 0) + webTopInset;
@@ -205,6 +259,37 @@ export default function MarketplaceScreen() {
     setPage('tab');
     if (role === 'buyer') setBuyerTab(tab as BuyerTab);
     else setSellerTab(tab as SellerTab);
+  };
+
+  const openBusinessProfile = (supplierId?: SupplierId) => {
+    setSelectedSupplier(supplierId ?? 'greenfield');
+    setProfileSection('Overview');
+    setPage('business');
+  };
+
+  const openOwnBusinessProfile = () => {
+    setSelectedSupplier('own');
+    setProfileSection('Overview');
+    setPage('business');
+  };
+
+  const saveBusinessProfile = async (nextProfile: BusinessProfileData) => {
+    setBusinessProfile(nextProfile);
+    const nextAccountProfile: AccountProfile = accountProfile
+      ? { ...accountProfile, accountType: 'business', location: nextProfile.location, business: nextProfile }
+      : {
+          accountType: 'business',
+          fullName: 'Chika Okafor',
+          location: nextProfile.location,
+          business: nextProfile,
+        };
+    setAccountProfile(nextAccountProfile);
+    try {
+      await AsyncStorage.setItem(ACCOUNT_PROFILE_STORAGE_KEY, JSON.stringify(nextAccountProfile));
+      setPage('business');
+    } catch {
+      Alert.alert('Could not save profile', 'Your changes have not been saved. Please try again.');
+    }
   };
 
   const requestQuote = () => {
@@ -223,6 +308,25 @@ export default function MarketplaceScreen() {
     [query],
   );
 
+  const selectedBusiness: SupplierProfile =
+    selectedSupplier === 'own'
+      ? {
+          ...SUPPLIER_PROFILES.greenfield,
+          name: businessProfile.name,
+          description: businessProfile.description,
+          location: businessProfile.location,
+          businessType: businessProfile.businessType,
+          verified: businessProfile.verificationStatus === 'verified',
+          rating: '—',
+          reviews: 'New business',
+          years: 'New on DuZo',
+          responseRate: '—',
+          established: '—',
+          paymentTerms: 'Set by seller',
+          deliveryArea: 'Add delivery areas',
+        }
+      : SUPPLIER_PROFILES[selectedSupplier];
+
   return (
     <View style={[styles.app, { paddingTop: topPad }]}>
       <StatusBar barStyle="dark-content" backgroundColor="#fff" />
@@ -230,7 +334,7 @@ export default function MarketplaceScreen() {
         {page === 'product' ? (
           <ProductScreen
             onBack={() => setPage('tab')}
-            onBusiness={() => setPage('business')}
+            onBusiness={() => openBusinessProfile('greenfield')}
             onQuote={requestQuote}
             onChat={() => setPage('chat')}
             favorite={favorite}
@@ -246,6 +350,9 @@ export default function MarketplaceScreen() {
               setBuyerTab('Home');
               setPage('tab');
             }}
+            profile={selectedBusiness}
+            isOwnBusiness={role === 'seller' && selectedSupplier === 'own'}
+            onEdit={() => setPage('edit-profile')}
             section={profileSection}
             onSection={setProfileSection}
             onProduct={() => setPage('product')}
@@ -279,14 +386,22 @@ export default function MarketplaceScreen() {
               }
             }}
           />
+        ) : page === 'edit-profile' ? (
+          <EditBusinessProfile
+            profile={businessProfile}
+            onBack={() => setPage('business')}
+            onSave={saveBusinessProfile}
+          />
         ) : role === 'seller' ? (
           <SellerContent
             tab={sellerTab}
             onTab={setSellerTab}
             onListing={() => setPage('listing')}
-            onBusiness={() => setPage('business')}
+            onBusiness={openOwnBusinessProfile}
+            onEditBusiness={() => setPage('edit-profile')}
             onProduct={() => setPage('product')}
             onChat={() => setPage('chat')}
+            businessProfile={businessProfile}
             onSwitchMode={() => {
               setRole('buyer');
               setBuyerTab('Home');
@@ -304,7 +419,7 @@ export default function MarketplaceScreen() {
             onExplore={() => changeTab('Explore')}
             onCategory={() => changeTab('Categories')}
             onProduct={() => setPage('product')}
-            onBusiness={() => setPage('business')}
+            onBusiness={openBusinessProfile}
             onQuote={requestQuote}
           />
         ) : buyerTab === 'Explore' ? (
@@ -312,7 +427,7 @@ export default function MarketplaceScreen() {
             query={query}
             onQuery={setQuery}
             onProduct={() => setPage('product')}
-            onBusiness={() => setPage('business')}
+            onBusiness={openBusinessProfile}
             onQuote={requestQuote}
             onProfile={() => changeTab('Profile')}
           />
@@ -320,7 +435,7 @@ export default function MarketplaceScreen() {
           <CategoriesScreen
             onBack={() => changeTab('Explore')}
             onProduct={() => setPage('product')}
-            onBusiness={() => setPage('business')}
+            onBusiness={() => openBusinessProfile()}
           />
         ) : buyerTab === 'Orders' ? (
           <OrdersScreen onProduct={() => setPage('product')} />
@@ -345,7 +460,7 @@ export default function MarketplaceScreen() {
               setRole('seller');
               setSellerTab('Overview');
             }}
-            onBusiness={() => setPage('business')}
+            onBusiness={() => openBusinessProfile()}
           />
         )}
       </View>
@@ -377,7 +492,7 @@ function BuyerHome({
   onExplore: () => void;
   onCategory: () => void;
   onProduct: () => void;
-  onBusiness: () => void;
+  onBusiness: (supplierId?: SupplierId) => void;
   onQuote: () => void;
 }) {
   return (
@@ -446,6 +561,7 @@ function BuyerHome({
         <>
           <SupplierCard onPress={onBusiness} onProduct={onProduct} />
           <SupplierCard
+            supplierId="primeharvest"
             second
             onPress={onBusiness}
             onProduct={onProduct}
@@ -471,7 +587,7 @@ function BuyerExplore({
   query: string;
   onQuery: (value: string) => void;
   onProduct: () => void;
-  onBusiness: () => void;
+  onBusiness: (supplierId?: SupplierId) => void;
   onQuote: () => void;
   onProfile: () => void;
 }) {
@@ -521,9 +637,9 @@ function BuyerExplore({
       </View>
       <SectionTitle title="Featured Suppliers" action="See all" onAction={onBusiness} />
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.supplierCarousel}>
-        <FeaturedSupplierCard onPress={onBusiness} />
-        <FeaturedSupplierCard second onPress={onBusiness} />
-        <FeaturedSupplierCard third onPress={onBusiness} />
+        <FeaturedSupplierCard supplierId="greenfield" onPress={onBusiness} />
+        <FeaturedSupplierCard supplierId="primeharvest" second onPress={onBusiness} />
+        <FeaturedSupplierCard supplierId="buildright" third onPress={onBusiness} />
       </ScrollView>
       <SectionTitle title="Top Deals & Bulk Prices" action="See all" onAction={onProduct} />
       <ProductCard onPress={onProduct} onQuote={onQuote} />
@@ -549,19 +665,24 @@ function QuickAction({
 }
 
 function SupplierCard({
+  supplierId = 'greenfield',
   second = false,
   onPress,
   onProduct,
 }: {
+  supplierId?: SupplierId;
   second?: boolean;
-  onPress: () => void;
+  onPress: (supplierId?: SupplierId) => void;
   onProduct: () => void;
 }) {
-  const name = second ? 'PrimeHarvest Foods' : 'GreenField Agro Supplies';
+  const name = SUPPLIER_PROFILES[supplierId].name;
   return (
-    <Pressable onPress={onPress} style={styles.supplierCard}>
+    <Pressable onPress={() => onPress(supplierId)} style={styles.supplierCard}>
       <View style={styles.supplierTop}>
-        <SupplierMark />
+        <SupplierMark
+          onPress={() => onPress(supplierId)}
+          accessibilityLabel={`Open ${name} business profile`}
+        />
         <View style={styles.supplierInfo}>
           <View style={styles.inline}>
             <Text style={styles.supplierName} numberOfLines={1}>{name}</Text>
@@ -598,19 +719,25 @@ function SupplierCard({
 }
 
 function FeaturedSupplierCard({
+  supplierId,
   second = false,
   third = false,
   onPress,
 }: {
+  supplierId: SupplierId;
   second?: boolean;
   third?: boolean;
-  onPress: () => void;
+  onPress: (supplierId?: SupplierId) => void;
 }) {
-  const name = third ? 'BuildRight' : second ? 'PrimeHarvest Foods' : 'GreenField Agro Supplies';
+  const name = SUPPLIER_PROFILES[supplierId].name;
   return (
-    <Pressable onPress={onPress} style={styles.featuredSupplier}>
+    <Pressable onPress={() => onPress(supplierId)} style={styles.featuredSupplier}>
       <View style={styles.featuredTop}>
-        <SupplierMark small />
+        <SupplierMark
+          small
+          onPress={() => onPress(supplierId)}
+          accessibilityLabel={`Open ${name} business profile`}
+        />
         <View style={styles.featuredNameWrap}>
           <View style={styles.inline}>
             <Text style={styles.featuredName} numberOfLines={1}>{name}</Text>
@@ -939,6 +1066,9 @@ function BusinessProfile({
   onQuote,
   onChat,
   onSwitchMode,
+  profile,
+  isOwnBusiness = false,
+  onEdit,
   section,
   onSection,
   onProduct,
@@ -947,6 +1077,9 @@ function BusinessProfile({
   onQuote: () => void;
   onChat: () => void;
   onSwitchMode: () => void;
+  profile: SupplierProfile;
+  isOwnBusiness?: boolean;
+  onEdit?: () => void;
   section: string;
   onSection: (value: string) => void;
   onProduct: () => void;
@@ -958,7 +1091,13 @@ function BusinessProfile({
         <Pressable onPress={onBack}><Feather name="arrow-left" size={20} color={C.foreground} /></Pressable>
         <Text style={styles.profileHeaderTitle}>Business Profile</Text>
         <View style={styles.inline}>
-          <Pressable><Feather name="share" size={18} color={C.foreground} /></Pressable>
+          <Pressable accessibilityLabel="Share business profile"><Feather name="share" size={18} color={C.foreground} /></Pressable>
+          {isOwnBusiness && onEdit ? (
+            <Pressable onPress={onEdit} style={styles.editProfileHeaderButton} accessibilityRole="button" accessibilityLabel="Edit business profile">
+              <Feather name="edit-2" size={14} color={C.primary} />
+              <Text style={styles.editProfileHeaderText}>Edit</Text>
+            </Pressable>
+          ) : null}
           <Pressable onPress={onSwitchMode} style={{ marginLeft: 14 }} accessibilityLabel="Switch to buyer">
             <Feather name="more-vertical" size={18} color={C.foreground} />
           </Pressable>
@@ -966,26 +1105,33 @@ function BusinessProfile({
       </View>
       <ScrollView style={styles.scroll} contentContainerStyle={styles.businessContent} showsVerticalScrollIndicator={false}>
         <View style={styles.businessIdentity}>
-          <View style={styles.businessLogo}><SupplierMark /></View>
+          <View style={styles.businessLogo}><SupplierMark accessibilityLabel={`${profile.name} logo`} /></View>
           <View style={styles.businessIdentityCopy}>
-            <View style={styles.inline}><Text style={styles.businessName}>GreenField Agro Supplies</Text><Verified /></View>
-            <Text style={styles.businessDescription}>Quality agricultural products for a better tomorrow.</Text>
             <View style={styles.inline}>
-              <Text style={styles.verifiedBusiness}>VERIFIED BUSINESS</Text>
+              <Text style={styles.businessName}>{profile.name}</Text>
+              {profile.verified ? <Verified /> : null}
+            </View>
+            <Text style={styles.businessDescription}>{profile.description}</Text>
+            <View style={styles.inline}>
+              <Text style={profile.verified ? styles.verifiedBusiness : styles.pendingBusiness}>
+                {profile.verified ? 'VERIFIED BUSINESS' : 'PENDING VERIFICATION'}
+              </Text>
               <Feather name="map-pin" size={12} color="#5f6963" />
-              <Text style={styles.metaText}>Lagos, Nigeria</Text>
+              <Text style={styles.metaText}>{profile.location}</Text>
             </View>
           </View>
         </View>
         <View style={styles.businessStats}>
-          <View style={styles.businessStat}><Text style={styles.statRating}>★ 4.8</Text><Text style={styles.mutedTiny}>(124 reviews)</Text></View>
-          <View style={styles.businessStat}><Text style={styles.statValue}><Feather name="calendar" size={13} color={C.foreground} />  3+ years</Text><Text style={styles.mutedTiny}>on Duzo</Text></View>
-          <View style={styles.businessStat}><Text style={styles.statValue}><Feather name="shield" size={13} color={C.foreground} />  98%</Text><Text style={styles.mutedTiny}>response rate</Text></View>
+          <View style={styles.businessStat}><Text style={styles.statRating}>★ {profile.rating}</Text><Text style={styles.mutedTiny}>{profile.reviews}</Text></View>
+          <View style={styles.businessStat}><Text style={styles.statValue}><Feather name="calendar" size={13} color={C.foreground} />  {profile.years}</Text><Text style={styles.mutedTiny}>on DuZo</Text></View>
+          <View style={styles.businessStat}><Text style={styles.statValue}><Feather name="shield" size={13} color={C.foreground} />  {profile.responseRate}</Text><Text style={styles.mutedTiny}>response rate</Text></View>
         </View>
-        <View style={styles.businessActions}>
-          <PrimaryButton label="Send Message" icon="message-circle" onPress={onChat} compact />
-          <OutlineButton label="Request Quote" icon="file-text" onPress={onQuote} compact />
-        </View>
+        {!isOwnBusiness ? (
+          <View style={styles.businessActions}>
+            <PrimaryButton label="Send Message" icon="message-circle" onPress={onChat} compact />
+            <OutlineButton label="Request Quote" icon="file-text" onPress={onQuote} compact />
+          </View>
+        ) : null}
         <View style={styles.profileTabs}>
           {sections.map((item) => (
             <Pressable key={item} onPress={() => onSection(item)} style={[styles.profileTab, section === item && styles.profileTabActive]}>
@@ -996,22 +1142,29 @@ function BusinessProfile({
         {section === 'Overview' ? (
           <>
             <Text style={styles.sectionTitle}>About Us</Text>
-            <Text style={styles.aboutCopy}>GreenField Agro Supplies is a trusted supplier of high-quality agricultural products, including grains, seeds, fertilizers and farm inputs. We work with local farmers and distributors across Nigeria to ensure consistent supply, competitive pricing and timely delivery.</Text>
+            <Text style={styles.aboutCopy}>{profile.description}</Text>
             <Pressable style={styles.readMore}><Text style={styles.seeAllText}>Read more</Text><Feather name="chevron-down" size={13} color={C.primary} /></Pressable>
             <View style={styles.verificationCard}>
-              <View style={styles.verifiedShield}><Feather name="shield" size={16} color="#fff" /></View>
-              <View style={styles.flex1}><Text style={styles.bodyStrong}>Business Verification</Text><Text style={styles.mutedTiny}>Documents verified · KYC completed · Registered Business</Text></View>
+              <View style={[styles.verifiedShield, !profile.verified && styles.pendingShield]}>
+                <Feather name={profile.verified ? 'shield' : 'clock'} size={16} color="#fff" />
+              </View>
+              <View style={styles.flex1}>
+                <Text style={styles.bodyStrong}>{profile.verified ? 'Business verified' : 'Verification in progress'}</Text>
+                <Text style={styles.mutedTiny}>
+                  {profile.verified ? 'Documents reviewed · Registered business' : 'Business documents are awaiting review'}
+                </Text>
+              </View>
               <Feather name="chevron-right" size={17} color="#456f4e" />
             </View>
             <View style={styles.businessDetailsGrid}>
-              <BusinessDetail icon="briefcase" label="Business Type" value="Supplier & Distributor" />
-              <BusinessDetail icon="calendar" label="Year Established" value="2021" />
-              <BusinessDetail icon="credit-card" label="Payment Terms" value="Net 15 / 30" />
-              <BusinessDetail icon="truck" label="Delivery Area" value="Nationwide" />
+              <BusinessDetail icon="briefcase" label="Business Type" value={profile.businessType} />
+              <BusinessDetail icon="calendar" label="Year Established" value={profile.established} />
+              <BusinessDetail icon="credit-card" label="Payment Terms" value={profile.paymentTerms} />
+              <BusinessDetail icon="truck" label="Delivery Area" value={profile.deliveryArea} />
             </View>
             <SectionTitle title="Popular Categories" />
             <View style={styles.popularGrid}>
-              {['Maize', 'Soya Beans', 'Fertilizers', 'Agro Inputs'].map((item, index) => (
+              {profile.categories.slice(0, 4).map((item, index) => (
                 <Pressable key={item} onPress={onProduct} style={styles.popularItem}>
                   {index < 2 ? <ProductImage style={styles.popularImage} /> : <View style={styles.popularImageAlt}><Feather name={index === 2 ? 'package' : 'sun'} size={20} color="#4f804e" /></View>}
                   <Text style={styles.popularLabel}>{item}</Text>
@@ -1025,16 +1178,25 @@ function BusinessProfile({
             {section === 'Products' ? (
               <ProductCard onPress={onProduct} onQuote={onQuote} />
             ) : section === 'Reviews' ? (
-              <View style={styles.reviewCard}><Text style={styles.statRating}>★ 4.8</Text><Text style={styles.bodyCopy}>“Reliable supplier and the maize quality was excellent. Delivery arrived on time.”</Text><Text style={styles.mutedSmall}>Chinedu A. · Verified buyer</Text></View>
+              <View style={styles.reviewCard}><Text style={styles.statRating}>★ {profile.rating}</Text><Text style={styles.bodyCopy}>“Reliable supplier and the product quality was excellent. Delivery arrived on time.”</Text><Text style={styles.mutedSmall}>Verified buyer</Text></View>
             ) : (
-              <View style={styles.verificationCard}><Feather name="award" size={20} color="#267847" /><View style={styles.flex1}><Text style={styles.bodyStrong}>Business registration verified</Text><Text style={styles.mutedSmall}>KYC completed · Nigerian registered business</Text></View></View>
+              <View style={styles.verificationCard}><Feather name={profile.verified ? 'award' : 'clock'} size={20} color={profile.verified ? '#267847' : '#a56a14'} /><View style={styles.flex1}><Text style={styles.bodyStrong}>{profile.verified ? 'Business registration verified' : 'Documents under review'}</Text><Text style={styles.mutedSmall}>{profile.verified ? 'KYC completed · Nigerian registered business' : 'Verification status will update after review'}</Text></View></View>
             )}
           </View>
         )}
       </ScrollView>
       <View style={styles.profileBottomBar}>
-        <OutlineButton label="Send Message" icon="message-circle" onPress={onChat} />
-        <PrimaryButton label="Request Quote" icon="file-text" onPress={onQuote} />
+        {isOwnBusiness ? (
+          <>
+            <OutlineButton label="Switch to buyer" icon="shopping-cart" onPress={onSwitchMode} />
+            <PrimaryButton label="Edit profile" icon="edit-2" onPress={onEdit ?? (() => {})} />
+          </>
+        ) : (
+          <>
+            <OutlineButton label="Send Message" icon="message-circle" onPress={onChat} />
+            <PrimaryButton label="Request Quote" icon="file-text" onPress={onQuote} />
+          </>
+        )}
       </View>
     </View>
   );
